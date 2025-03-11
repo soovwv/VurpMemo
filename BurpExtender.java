@@ -1,4 +1,6 @@
 // soovwv
+// This version has the screen divided into 4 sections.
+
 package burp;
 
 import java.awt.*;
