@@ -1,5 +1,6 @@
 # VurpMemo
 Provides a memo function as a Burp Suite tool extension.
+I recommend version 3.
 
 #### 0. Change the name to "BurpExtender.java"
 #### 1. javac compile
