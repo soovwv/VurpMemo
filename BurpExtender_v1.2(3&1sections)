@@ -1,0 +1,519 @@
+// Hot keys do not work...
+// but more good ui, Cuz of adding notepad function
+
+package burp;
+
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.*;
+import javax.swing.*;
+import javax.swing.border.TitledBorder;
+
+public class BurpExtender implements IBurpExtender, ITab {
+
+    private IBurpExtenderCallbacks callbacks;
+    private JPanel mainPanel;
+    private static final int MAX_ITEMS = 1000;
+    private javax.swing.Timer debounceTimer;
+
+    private JTextField todoField, memoField1, memoField2;
+    private DefaultListModel<String> todoListModel, memoListModel1, memoListModel2;
+    private JList<String> todoList, memoList1, memoList2;
+    private Map<String, Color> highlightColors = new HashMap<>();
+    private JTextArea notepadArea;
+
+    @Override
+    public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
+        this.callbacks = callbacks;
+        callbacks.setExtensionName("*VurpMemo");
+
+        SwingUtilities.invokeLater(() -> {
+            mainPanel = new JPanel(new BorderLayout());
+
+            // 상단 패널: 입력 필드와 리스트
+            JPanel topPanel = new JPanel(new BorderLayout());
+            JPanel inputPanel = new JPanel(new GridLayout(1, 3, 10, 10));
+            inputPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+            todoField = createInputField("[To-Do]", inputPanel, "todo");
+            memoField1 = createInputField("Memo1", inputPanel, "memo1");
+            memoField2 = createInputField("Memo2", inputPanel, "memo2");
+
+            JPanel listPanel = new JPanel(new GridLayout(1, 3, 10, 10));
+            listPanel.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
+
+            todoList = createList("To-Do", listPanel, todoListModel = new DefaultListModel<>());
+            memoList1 = createList("List", listPanel, memoListModel1 = new DefaultListModel<>());
+            memoList2 = createList("List", listPanel, memoListModel2 = new DefaultListModel<>());
+
+            topPanel.add(inputPanel, BorderLayout.NORTH);
+            topPanel.add(listPanel, BorderLayout.CENTER);
+            topPanel.setPreferredSize(new Dimension(0, 300));
+
+            // 하단 패널: Notepad와 버튼
+            JPanel bottomPanel = new JPanel(new BorderLayout());
+            notepadArea = new JTextArea(10, 20);
+            notepadArea.setBorder(BorderFactory.createTitledBorder("Notepad"));
+            JScrollPane notepadScrollPane = new JScrollPane(notepadArea);
+            bottomPanel.add(notepadScrollPane, BorderLayout.CENTER);
+
+            JPanel buttonPanel = new JPanel(new BorderLayout());
+            JPanel leftButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JPanel rightButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+
+            JButton hotKeysButton = new JButton("Hot Keys");
+            hotKeysButton.setBackground(new Color(173, 216, 230));
+            hotKeysButton.addActionListener(e -> showHotKeys());
+            leftButtonPanel.add(hotKeysButton);
+
+            // 변경: Clear All 버튼을 3개로 분리
+            JButton clearTodoButton = new JButton("Clear Todo");
+            clearTodoButton.setBackground(new Color(255, 99, 71));
+            clearTodoButton.addActionListener(e -> clearTodo());
+            leftButtonPanel.add(clearTodoButton);
+
+            JButton clearMemoButton = new JButton("Clear Memo");
+            clearMemoButton.setBackground(new Color(255, 99, 71));
+            clearMemoButton.addActionListener(e -> clearMemos());
+            leftButtonPanel.add(clearMemoButton);
+            
+            JButton clearNotepadButton = new JButton("Clear Notepad");
+            clearNotepadButton.setBackground(new Color(255, 99, 71));
+            clearNotepadButton.addActionListener(e -> clearNotepad());
+            leftButtonPanel.add(clearNotepadButton);
+
+            buttonPanel.add(leftButtonPanel, BorderLayout.WEST);
+
+            JButton openFolderButton = new JButton("Save Folder");
+            openFolderButton.setBackground(new Color(173, 216, 230));
+            openFolderButton.addActionListener(e -> openSaveFolder());
+            rightButtonPanel.add(openFolderButton);
+
+            JButton loadButton = new JButton("Load");
+            loadButton.setBackground(new Color(255, 182, 193));
+            loadButton.addActionListener(e -> loadMemos());
+            rightButtonPanel.add(loadButton);
+
+            JButton saveButton = new JButton("Save Memo");
+            saveButton.setBackground(new Color(144, 238, 144));
+            saveButton.addActionListener(e -> saveMemos());
+            rightButtonPanel.add(saveButton);
+
+            buttonPanel.add(rightButtonPanel, BorderLayout.EAST);
+            bottomPanel.add(buttonPanel, BorderLayout.SOUTH);
+            bottomPanel.setPreferredSize(new Dimension(0, 200));
+
+            // JSplitPane으로 상단/하단 분할
+            JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, topPanel, bottomPanel);
+            splitPane.setDividerLocation(300);
+            splitPane.setResizeWeight(0.6);
+
+            mainPanel.add(splitPane, BorderLayout.CENTER);
+
+            // 단축키 설정 - 수정된 방식
+            setupHotKeys();
+
+            callbacks.customizeUiComponent(mainPanel);
+            callbacks.addSuiteTab(this);
+            callbacks.printOutput("soovwv~~~~soovwv~~~~soovwv~~~~~~~~~java compile no dab~~~");
+        });
+    }
+
+    private JTextField createInputField(String label, JPanel panel, String type) {
+        JPanel fieldPanel = new JPanel(new BorderLayout(5, 0));
+        JTextField field = new JTextField(15);
+        JButton addButton = new JButton("Add");
+        addButton.setBackground(new Color(140, 136, 136));
+
+        fieldPanel.add(new JLabel(label + ": "), BorderLayout.WEST);
+        fieldPanel.add(field, BorderLayout.CENTER);
+        fieldPanel.add(addButton, BorderLayout.EAST);
+        panel.add(fieldPanel);
+
+        // 성능 개선: 디바운스 타이머 최적화
+        ActionListener addAction = e -> {
+            String text = field.getText().trim();
+            if (!text.isEmpty()) {
+                switch (type) {
+                    case "todo": addToList(todoListModel, text); break;
+                    case "memo1": addToList(memoListModel1, text); break;
+                    case "memo2": addToList(memoListModel2, text); break;
+                }
+                field.setText("");
+            }
+        };
+
+        // Enter 키 이벤트 추가
+        field.addActionListener(addAction);
+        
+        addButton.addActionListener(e -> {
+            if (debounceTimer != null && debounceTimer.isRunning()) {
+                debounceTimer.stop();
+            }
+            
+            debounceTimer = new javax.swing.Timer(100, ev -> addAction.actionPerformed(null));
+            debounceTimer.setRepeats(false);
+            debounceTimer.start();
+        });
+
+        return field;
+    }
+
+    private void addToList(DefaultListModel<String> model, String text) {
+        if (model.size() >= MAX_ITEMS) {
+            model.remove(0);
+        }
+        model.addElement(text);
+    }
+
+    private JList<String> createList(String title, JPanel panel, DefaultListModel<String> listModel) {
+        JList<String> list = new JList<>(listModel);
+        list.setVisibleRowCount(10);
+        list.setCellRenderer(new HighlightRenderer());
+        JScrollPane scrollPane = new JScrollPane(list);
+        scrollPane.setBorder(BorderFactory.createTitledBorder(title));
+        panel.add(scrollPane);
+
+        JPopupMenu popup = new JPopupMenu();
+        JMenuItem deleteItem = new JMenuItem("Delete");
+        deleteItem.addActionListener(e -> {
+            int index = list.getSelectedIndex();
+            if (index != -1) {
+                listModel.remove(index);
+            }
+        });
+        JMenuItem editItem = new JMenuItem("Edit");
+        editItem.addActionListener(e -> {
+            int index = list.getSelectedIndex();
+            if (index != -1) {
+                String current = listModel.get(index);
+                String newText = JOptionPane.showInputDialog(mainPanel, "Edit content:", current);
+                if (newText != null && !newText.trim().isEmpty()) {
+                    listModel.set(index, newText);
+                }
+            }
+        });
+        JMenuItem highlightItem = new JMenuItem("Highlight");
+        highlightItem.addActionListener(e -> {
+            int index = list.getSelectedIndex();
+            if (index != -1) {
+                Color color = JColorChooser.showDialog(mainPanel, "Choose Highlight Color", Color.YELLOW);
+                if (color != null) {
+                    String item = listModel.get(index);
+                    highlightColors.put(item, color);
+                    list.repaint();
+                }
+            }
+        });
+        popup.add(deleteItem);
+        popup.add(editItem);
+        popup.add(highlightItem);
+
+        list.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) showPopup(e);
+            }
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) showPopup(e);
+            }
+            private void showPopup(MouseEvent e) {
+                int index = list.locationToIndex(e.getPoint());
+                if (index != -1) {
+                    list.setSelectedIndex(index);
+                    popup.show(list, e.getX(), e.getY());
+                }
+            }
+        });
+
+        return list;
+    }
+
+    private void showHotKeys() {
+        String hotKeys = "Hot Keys:\n" +
+                         "Ctrl+1 or Cmd+1: Highlight selected item\n" +
+                         "Ctrl+2 or Cmd+2: Edit selected item\n" +
+                         "Ctrl+3 or Cmd+3: Delete selected item";
+        JOptionPane.showMessageDialog(mainPanel, hotKeys, "Hot Keys", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    // 개선된 핫키 설정 메소드
+    private void setupHotKeys() {
+        // 문제 해결: 전역 키 바인딩으로 변경하여 포커스 관계없이 동작하게 수정
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
+            // 키 누름 이벤트만 처리
+            if (e.getID() != KeyEvent.KEY_PRESSED) {
+                return false;
+            }
+
+            // Ctrl+1 또는 Cmd+1 (하이라이트)
+            if (e.getKeyCode() == KeyEvent.VK_1 && (e.isControlDown() || e.isMetaDown())) {
+                highlightSelectedItem();
+                return true;
+            }
+            // Ctrl+2 또는 Cmd+2 (편집)
+            else if (e.getKeyCode() == KeyEvent.VK_2 && (e.isControlDown() || e.isMetaDown())) {
+                editSelectedItem();
+                return true;
+            }
+            // Ctrl+3 또는 Cmd+3 (삭제)
+            else if (e.getKeyCode() == KeyEvent.VK_3 && (e.isControlDown() || e.isMetaDown())) {
+                deleteSelectedItem();
+                return true;
+            }
+            
+            return false;
+        });
+    }
+
+    // 하이라이트 기능
+    private void highlightSelectedItem() {
+        JList<String> activeList = getActiveList();
+        if (activeList != null && activeList.getSelectedIndex() != -1) {
+            String item = activeList.getSelectedValue();
+            highlightColors.put(item, Color.YELLOW);
+            activeList.repaint();
+            callbacks.printOutput("Item highlighted: " + item);
+        }
+    }
+
+    // 편집 기능
+    private void editSelectedItem() {
+        JList<String> activeList = getActiveList();
+        if (activeList != null && activeList.getSelectedIndex() != -1) {
+            int index = activeList.getSelectedIndex();
+            String current = activeList.getModel().getElementAt(index);
+            String newText = JOptionPane.showInputDialog(mainPanel, "Edit content:", current);
+            if (newText != null && !newText.trim().isEmpty()) {
+                ((DefaultListModel<String>) activeList.getModel()).set(index, newText);
+                callbacks.printOutput("Item edited: " + current + " -> " + newText);
+            }
+        }
+    }
+
+    // 삭제 기능
+    private void deleteSelectedItem() {
+        JList<String> activeList = getActiveList();
+        if (activeList != null && activeList.getSelectedIndex() != -1) {
+            String item = activeList.getSelectedValue();
+            ((DefaultListModel<String>) activeList.getModel()).remove(activeList.getSelectedIndex());
+            callbacks.printOutput("Item deleted: " + item);
+        }
+    }
+
+    private JList<String> getActiveList() {
+        // 현재 포커스된 리스트 또는 선택된 리스트 가져오기
+        Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+        
+        // 포커스 기반 체크
+        if (focusOwner == todoList) return todoList;
+        if (focusOwner == memoList1) return memoList1;
+        if (focusOwner == memoList2) return memoList2;
+        
+        // 포커스가 없으면 선택된 항목 기반으로 체크
+        if (todoList.getSelectedIndex() != -1) return todoList;
+        if (memoList1.getSelectedIndex() != -1) return memoList1;
+        if (memoList2.getSelectedIndex() != -1) return memoList2;
+        
+        // 기본값
+        return null;
+    }
+
+    // 분리된 클리어 기능들
+    private void clearTodo() {
+        todoListModel.clear();
+        callbacks.printOutput("Todo list cleared.");
+    }
+    
+    private void clearMemos() {
+        memoListModel1.clear();
+        memoListModel2.clear();
+        callbacks.printOutput("Memo lists cleared.");
+    }
+    
+    private void clearNotepad() {
+        notepadArea.setText("");
+        callbacks.printOutput("Notepad cleared.");
+    }
+
+    private class HighlightRenderer extends DefaultListCellRenderer {
+        // 성능 개선: 렌더러 내부에 색상 캐시 추가
+        private final Map<String, Component> componentCache = new HashMap<>();
+        
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            String key = value.toString() + "_" + isSelected;
+            
+            // 캐시된 컴포넌트가 있으면 재사용 (성능 향상)
+            if (componentCache.containsKey(key) && componentCache.size() < 100) {
+                return componentCache.get(key);
+            }
+            
+            Component c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            Color highlightColor = highlightColors.get(value.toString());
+            
+            if (highlightColor != null) {
+                c.setBackground(highlightColor);
+            } else if (!isSelected) {
+                c.setBackground(list.getBackground());
+            }
+            
+            // 100개 이하일 때만 캐시 (메모리 관리)
+            if (componentCache.size() < 100) {
+                componentCache.put(key, c);
+            }
+            
+            return c;
+        }
+    }
+
+    private void openSaveFolder() {
+        try {
+            String userHome = System.getProperty("user.home");
+            File burpDir = new File(userHome, ".burp");
+            if (!burpDir.exists()) {
+                burpDir.mkdirs();
+            }
+            Desktop.getDesktop().open(burpDir);
+            callbacks.printOutput("Save folder opened: " + burpDir.getAbsolutePath());
+        } catch (IOException e) {
+            callbacks.printError("Failed to open folder: " + e.getMessage());
+            JOptionPane.showMessageDialog(mainPanel, "Failed to open folder: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void saveMemos() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                String userHome = System.getProperty("user.home");
+                File burpDir = new File(userHome, ".burp");
+                if (!burpDir.exists()) burpDir.mkdirs();
+                File memoFile = new File(burpDir, "burp_memo.txt");
+
+                // 성능 개선: 버퍼 크기 증가 및 StringBuilder 사용
+                try (BufferedWriter bw = new BufferedWriter(new FileWriter(memoFile), 16384)) {
+                    StringBuilder sb = new StringBuilder(2048);
+                    
+                    sb.append("To-Do:\n");
+                    for (int i = 0; i < todoListModel.size(); i++) 
+                        sb.append("  - ").append(todoListModel.get(i)).append('\n');
+                    
+                    sb.append("Memo1:\n");
+                    for (int i = 0; i < memoListModel1.size(); i++) 
+                        sb.append("  - ").append(memoListModel1.get(i)).append('\n');
+                    
+                    sb.append("Memo2:\n");
+                    for (int i = 0; i < memoListModel2.size(); i++) 
+                        sb.append("  - ").append(memoListModel2.get(i)).append('\n');
+                    
+                    sb.append("Notepad:\n")
+                      .append(notepadArea.getText()).append('\n')
+                      .append("Saved at: ").append(new java.util.Date());
+                    
+                    bw.write(sb.toString());
+                }
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                    callbacks.printOutput("Memo saved successfully.");
+                    JOptionPane.showMessageDialog(mainPanel, "Memo saved successfully.", "Save Complete", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {
+                    callbacks.printError("Error saving memo: " + e.getMessage());
+                    JOptionPane.showMessageDialog(mainPanel, "Failed to save memo: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void loadMemos() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                String userHome = System.getProperty("user.home");
+                File memoFile = new File(userHome + "/.burp/burp_memo.txt");
+                if (!memoFile.exists()) {
+                    callbacks.printOutput("No saved memo file found: " + memoFile.getAbsolutePath());
+                    return null;
+                }
+
+                todoListModel.clear();
+                memoListModel1.clear();
+                memoListModel2.clear();
+                notepadArea.setText("");  // 노트패드도 클리어
+
+                try (BufferedReader reader = new BufferedReader(new FileReader(memoFile), 16384)) {
+                    String line;
+                    String currentSection = null;
+                    StringBuilder notepadContent = new StringBuilder();
+                    boolean isNotepad = false;
+
+                    while ((line = reader.readLine()) != null) {
+                        if (line.startsWith("To-Do:")) {
+                            currentSection = "todo";
+                            isNotepad = false;
+                        } else if (line.startsWith("Memo1:")) {
+                            currentSection = "memo1";
+                            isNotepad = false;
+                        } else if (line.startsWith("Memo2:")) {
+                            currentSection = "memo2";
+                            isNotepad = false;
+                        } else if (line.startsWith("Notepad:")) {
+                            currentSection = null;
+                            isNotepad = true;
+                        } else if (line.startsWith("Saved at:")) {
+                            break;
+                        } else if (isNotepad) {
+                            notepadContent.append(line).append("\n");
+                        } else if (line.startsWith("  - ") && currentSection != null) {
+                            String item = line.substring(4).trim();
+                            if (!item.isEmpty()) {
+                                switch (currentSection) {
+                                    case "todo": addToList(todoListModel, item); break;
+                                    case "memo1": addToList(memoListModel1, item); break;
+                                    case "memo2": addToList(memoListModel2, item); break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (notepadContent.length() > 0) {
+                        notepadArea.setText(notepadContent.toString());
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                    callbacks.printOutput("Memo loaded successfully.");
+                    JOptionPane.showMessageDialog(mainPanel, "Memo loaded successfully.", "Load Complete", JOptionPane.INFORMATION_MESSAGE);
+                } catch (Exception e) {
+                    callbacks.printError("Error loading memo: " + e.getMessage());
+                    JOptionPane.showMessageDialog(mainPanel, "Failed to load memo: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    @Override
+    public String getTabCaption() {
+        return "*VurpMemo";
+    }
+
+    @Override
+    public Component getUiComponent() {
+        return mainPanel;
+    }
+}
